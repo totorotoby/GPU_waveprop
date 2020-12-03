@@ -37,7 +37,7 @@ function mat_free_solve(c::Float64, x, y, t, Δx::Float64, Δy::Float64, Δt::Fl
                 end
 
                 # stencil computation
-                U[i,j,k] = 2U[i,j,k-1] - U[i, j, k-2] + c * (Δt^2) * (d2x + d2y) + (Δt^2)*F(xval, yval, tval)
+                U[i,j,k] = 2U[i,j,k-1] - U[i, j, k-2] + c^2 * (Δt^2) * (d2x + d2y) + (Δt^2)*F(xval, yval, tval)
             end
         end
     end
@@ -46,139 +46,135 @@ end
 
 let
 
-    # number of spatial nodes in x direction
-    nx = ny = 12
-    # number of interior nodes
-    ni = nx - 2
-    #distance between nodes
-    Δx = Δy = 2/(nx - 1)
-    x = -1:Δx:1
-    xin = x[2:nx-1]
-    y = -1:Δx:1
-    yin = y[2:ny-1]
-    # size of MOL vector solution
-    N = ni^2
-    ###################
-    #  derive CFL??   #
-    ###################
-    Δt = .01
-    T = 3
-    t = 0:Δt:T
-    M = length(t)
+    m_refine = 4:16
+    errors = Array{Float64,2}(undef, length(m_refine), length(m_refine))
+
     
-    # wave speed
-    c = 1.0
+    for nx in enumerate(m_refine)
+        # number of spatial nodes in x direction
+        ny = nx
+        # number of interior nodes
+        ni = nx - 2
+        #distance between nodes
+        Δx = Δy = 2/(nx - 1)
+        x = -1:Δx:1
+        xin = x[2:nx-1]
+        #@show collect(xin)
+        y = -1:Δx:1
+        yin = y[2:ny-1]
+        #@show collect(yin)
+        # size of MOL vector solution
+        N = ni^2
+        
+        ###################
+        #  derive CFL??   #
+        ###################
+        Δt = .01
+        T = .5
+        t = 0:Δt:T
+        M = length(t)
+        
+        # wave speed
+        c = 1.0
 
-    #################################
-    #     Manufactured Solution     #
-    #################################
- 
-    # gaussian width
-    b_w = .5
-    # gaussian height
-    amp = 1
+        #################################
+        #     Manufactured Solution     #
+        #################################
 
-    # gaussian
-    f(x) = amp * exp(-((x) / b_w)^2)
-    fp(x) = -2((x) / b_w^2)* amp * exp(-((x) / b_w)^2)
-    fpp(x) = -(2 * amp * exp(-(x)^2/b_w^2)*(b_w^2 - 2x^2))/b_w^4
-
-    # convert to radial coordinates
-    rad(x,y) = sqrt(x^2 + y^2)
-    rad_x(x,y) = x / sqrt(x^2 + y^2)
-    rad_xx(x,y) = y^2 / sqrt(x^2 + y^2)
-    rad_y(x,y) = y / sqrt(x^2 + y^2)
-    rad_y(x,y) = x^2 / sqrt(x^2 + y^2)
-
-    #=
-    guessed solution
-    sending plane wave out a reflection back in same direction.
-    could use radial waves instead with rad, but getting source function
-    will be annoying...
-    =#
-
-    ue(x,y,t) = f(x+y - c * t) -
-        f(x + y - 3 + c * t)
-    ue_xx(x,y,t) = fpp(x+y - c*t) -
-        fpp(x + y - 3 + c*t)
-    ue_yy(x,y,t) = fpp(x+y - c*t) -
-        fpp(x + y - 3 + c*t)
-    ue_t(x,y,t) = -c*(fp(x+y - c*t)
-                         +fp(x+y - 3 + c*t))
-    ue_tt(x,y,t) = c^2*(fpp(x+y - c*t) -
-                        fpp(x + y - 3 + c*t))
-    
-    F(x,y,t) = ue_tt(x,y,t) - c*(ue_xx(x,y,t) + ue_yy(x,y,t))
+        # guess solution sin waves scaled to domain
+        ue(x,y,t) = sin(π*x)*sin(π*y)*cos(π*c*t)
+        ue_xx(x,y,t) = -π^2*sin(π*x)*sin(π*y)*cos(π*c*t)
+        ue_yy(x,y,t) = -π^2*sin(π*x)*sin(π*y)*cos(π*c*t)
+        ue_t(x,y,t) = -π*c*sin(π*x)*sin(π*y)*sin(π*c*t)
+        ue_tt(x,y,t) = -π^2*c^2*sin(π*x)*sin(π*y)*cos(π*c*t)
+        
+        F(x,y,t) = ue_tt(x,y,t) - c^2*(ue_xx(x,y,t) + ue_yy(x,y,t))
 
 
-    # just interior points of source and guessed solution
-    # matrix format
-    ue_m(t) = [ue(i, j, t) for i in xin, j in yin]
-    # column stacked
-    ue_v(t) = [ue(i, j, t) for j in yin for i in xin]
-    ue_tv(t) = [ue_t(i, j, t) for j in yin for i in xin]
-    F_v(t) = vcat(zeros(N), [F(i,j,t) for j in yin for i in xin])
-    
-    #=
-    for time in t
+        # just interior points of source and guessed solution
+        # matrix format
+        ue_m(t) = [ue(i, j, t) for i in xin, j in yin]
+        # column stacked
+        ue_v(t) = [ue(i, j, t) for j in yin for i in xin]
+
+        
+        
+        ue_tv(t) = [ue_t(i, j, t) for j in yin for i in xin]
+        F_v(t) = vcat(zeros(N), [F(i,j,t) for j in yin for i in xin])
+        
+        #@show ue_m(0)
+        #=
+        for time in t
         z = [ue(i,j, time) for i in x, j in y]
         plot(x,y,z, st=:surface, zlims = (-(1+amp), 1+amp))
         #Plots.contourf(x, y, z)
         sleep(.1)
         gui()
-    end
-    =#
-    
-    ###########################
-    #    CPU Matrix-Free      # 
-    ###########################
+        end
+        =#
+        
+        ###########################
+        #    CPU Matrix-Free      # 
+        ###########################
+
+        #=
+        U = Array{Float64,3}(undef, ni, ni, M)
+        U[:, :, 1] = ue_m(0)
+        U[:, :, 2] = ue_m(Δt)
+        mat_free_solve(c, xin, yin, t, Δx, Δy, Δt, ni, T, U, F)
+        
+        for (m, time) in enumerate(t)
+        plot(xin, yin, ue_m(time), st=:surface, c=:blues, zlims = (-(1+amp), 1+amp))
+        plot!(xin, yin, U[:,:,m], st=:surface, zlims = (-(1+amp), 1+amp))
+        sleep(.1)
+        gui()
+        end
+        
+        error = norm(U[:,:,end] .- ue_m(T)) * sqrt(Δx^2)
+        @show error
+        end
+        =#
+        
+        ###################
+        #     CPU-MOL     #
+        ###################
+        
+        
+        Umol = Array{Float64,2}(undef, 2*N, M)
+        # add displacement and velocity intial condition.
+        Umol[:,1] = vcat(ue_v(0), ue_tv(0))
+        #display(Umol[:,1])
+        #discrete laplician
+        Ix = sparse(I, ni, ni)
+        Iy = sparse(I, ni, ni)
+        D2 = sparse(1:ni, 1:ni, -2) +
+        sparse(2:ni, 1:ni-1, ones(ni-1), ni, ni) +
+        sparse(1:ni-1, 2:ni, ones(ni-1), ni, ni)
+        Dxx = kron(D2, Iy)
+        Dyy = kron(Ix, D2)
+        
+        # constructing matrix to do timestepping
+        Auu = spzeros(N,N)
+        Auv = sparse(I, N, N)
+        Avu = (c^2/Δx^2) * (Dxx + Dyy)
+        Avv = spzeros(N,N)
+        A = [Auu Auv
+             Avu Avv]
+        
+        for m = 2:M
+            Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt))
+        end
+        
+        usol = Umol[1:N,end]
 
     #=
-    U = Array{Float64,3}(undef, ni, ni, M)
-    U[:, :, 1] = ue_m(0)
-    U[:, :, 2] = ue_m(Δt)
-    mat_free_solve(c, xin, yin, t, Δx, Δy, Δt, ni, T, U, F)
-    
-    for (m, time) in enumerate(t)
-        plot(xin, yin, U[:,:,m], st=:surface, zlims = (-(1+amp), 1+amp))
+    plot_step = 4
+    for m in 1:plot_step:M
+        plot(xin, yin, Umol[1:N,m], st=:surface, zlims = (-(1+amp), 1+amp))
         sleep(.1)
         gui()
     end
-    
-    #error = norm(U[:, :, end] - ue_v)
     =#
-    ###################
-    #     CPU-MOL     #
-    ###################
-
-    Umol = Array{Float64,2}(undef, 2*N, M)
-
-    # add displacement and velocity intial condition.
-    Umol[:,1] = vcat(ue_v(0), ue_tv(0))
-    
-    #discrete laplician
-    Ix = sparse(I, ni, ni)
-    Iy = sparse(I, ni, ni)
-    D2 = sparse(1:ni, 1:ni, -2) +
-        sparse(2:ni, 1:ni-1, ones(ni-1), ni, ni) +
-        sparse(1:ni-1, 2:ni, ones(ni-1), ni, ni)
-    Dxx = kron(D2, Iy)
-    Dyy = kron(Ix, D2)
-
-    # constructing matrix to do timestepping
-    Auu = spzeros(N,N)
-    Auv = sparse(I, N, N)
-    Avu = (c/Δx^2)*(Dxx + Dyy)
-    Avv = spzeros(N,N)
-    
-    A = [Auu Auv
-         Avu Avv]
-
-    for m = 2:M
-        Umol[:,m] = Umol[:,m-1] .+ Δt*(A*Umol[:,m-1] + F_v((m-1)*Δt))
-    end
-
-    usol = Umol[1:N,end]
 
     error = norm(usol - ue_v(T)) * √(Δx^2)
 
@@ -187,6 +183,6 @@ let
     
     nothing
 
-    
+   end
     
 end
