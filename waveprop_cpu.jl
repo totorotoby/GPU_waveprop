@@ -2,6 +2,9 @@ using LinearAlgebra
 using SparseArrays
 using Kronecker
 using Plots
+using Printf
+using CUDA
+include("matfree_GPU.jl")
 
 
 
@@ -42,15 +45,17 @@ function mat_free_solve(c::Float64, x, y, t, Δx::Float64, Δy::Float64, Δt::Fl
         end
     end
 end
-
+                    
 
 let
 
-    m_refine = 4:16
+    m_refine = 6:6
+    nodes = 2*2 .^ m_refine
     errors = Array{Float64,2}(undef, length(m_refine), length(m_refine))
 
     
-    for nx in enumerate(m_refine)
+    for (iter, nx) in enumerate(nodes)
+        @printf("%d number of elements\n", nx)
         # number of spatial nodes in x direction
         ny = nx
         # number of interior nodes
@@ -62,20 +67,16 @@ let
         #@show collect(xin)
         y = -1:Δx:1
         yin = y[2:ny-1]
-        #@show collect(yin)
         # size of MOL vector solution
         N = ni^2
-        
-        ###################
-        #  derive CFL??   #
-        ###################
-        Δt = .01
-        T = .5
+
+        # wave speed
+        c = 1.0
+        Δt = .5*Δx^2*c 
+        T = 1
         t = 0:Δt:T
         M = length(t)
         
-        # wave speed
-        c = 1.0
 
         #################################
         #     Manufactured Solution     #
@@ -93,20 +94,20 @@ let
 
         # just interior points of source and guessed solution
         # matrix format
-        ue_m(t) = [ue(i, j, t) for i in xin, j in yin]
+        ue_m(t, mesh) = [ue(i, j, t) for i in mesh, j in mesh]
         # column stacked
-        ue_v(t) = [ue(i, j, t) for j in yin for i in xin]
+        ue_v(t, mesh) = [ue(i, j, t) for j in mesh for i in mesh]
 
         
         
-        ue_tv(t) = [ue_t(i, j, t) for j in yin for i in xin]
-        F_v(t) = vcat(zeros(N), [F(i,j,t) for j in yin for i in xin])
+        ue_tv(t, mesh) = [ue_t(i, j, t) for j in yin for i in mesh]
+        F_v(t, mesh) = vcat(zeros(N), [F(i,j,t) for j in yin for i in mesh])
         
         #@show ue_m(0)
         #=
         for time in t
         z = [ue(i,j, time) for i in x, j in y]
-        plot(x,y,z, st=:surface, zlims = (-(1+amp), 1+amp))
+        plot(x,y,z, st=:surface, zlims = (-1.5, 1.5))
         #Plots.contourf(x, y, z)
         sleep(.1)
         gui()
@@ -116,29 +117,35 @@ let
         ###########################
         #    CPU Matrix-Free      # 
         ###########################
-
         #=
         U = Array{Float64,3}(undef, ni, ni, M)
-        U[:, :, 1] = ue_m(0)
-        U[:, :, 2] = ue_m(Δt)
-        mat_free_solve(c, xin, yin, t, Δx, Δy, Δt, ni, T, U, F)
+        U[:, :, 1] = ue_m(0, xin)
+        U[:, :, 2] = ue_m(Δt, xin)
         
+        mat_free_solve(c, xin, yin, t, Δx, Δy, Δt, ni, T, U, F)
+        #=
         for (m, time) in enumerate(t)
         plot(xin, yin, ue_m(time), st=:surface, c=:blues, zlims = (-(1+amp), 1+amp))
         plot!(xin, yin, U[:,:,m], st=:surface, zlims = (-(1+amp), 1+amp))
         sleep(.1)
         gui()
         end
-        
-        error = norm(U[:,:,end] .- ue_m(T)) * sqrt(Δx^2)
-        @show error
+        =#
+        errors[iter] = norm(U[:,:,end] .- ue_m(T)) * sqrt(Δx^2)
+        #@printf("\tError mat free: %f\n", error)
+        if iter != 1
+            @printf("current error: %f\n", errors[iter])
+            @printf("previous error: %f\n", errors[iter-1])
+            @printf("rate: %f\n\n", log(2, errors[iter-1]/errors[iter]))
+            
+        end
+
         end
         =#
-        
         ###################
         #     CPU-MOL     #
         ###################
-        
+       #= 
         
         Umol = Array{Float64,2}(undef, 2*N, M)
         # add displacement and velocity intial condition.
@@ -148,8 +155,8 @@ let
         Ix = sparse(I, ni, ni)
         Iy = sparse(I, ni, ni)
         D2 = sparse(1:ni, 1:ni, -2) +
-        sparse(2:ni, 1:ni-1, ones(ni-1), ni, ni) +
-        sparse(1:ni-1, 2:ni, ones(ni-1), ni, ni)
+            sparse(2:ni, 1:ni-1, ones(ni-1), ni, ni) +
+            sparse(1:ni-1, 2:ni, ones(ni-1), ni, ni)
         Dxx = kron(D2, Iy)
         Dyy = kron(Ix, D2)
         
@@ -167,22 +174,69 @@ let
         
         usol = Umol[1:N,end]
 
-    #=
-    plot_step = 4
-    for m in 1:plot_step:M
+        #=
+        plot_step = 4
+        for m in 1:plot_step:M
         plot(xin, yin, Umol[1:N,m], st=:surface, zlims = (-(1+amp), 1+amp))
         sleep(.1)
         gui()
+        end
+        =#
+
+        errors[iter] = norm(usol - ue_v(T)) * √(Δx^2)
+        
+        if iter != 1
+            @printf("current error: %f\n", errors[iter])
+            @printf("previous error: %f\n", errors[iter-1])
+            @printf("rate: %f\n\n", log(2, errors[iter-1]/errors[iter]))
+        end
+        
+        nothing
+        
     end
     =#
 
-    error = norm(usol - ue_v(T)) * √(Δx^2)
+            
+        ##################################
+        #     GPU spatial Matrix-Free    # 
+        ##################################
+        
+        U = Array{Float64,3}(undef, nx, nx, 3)
+        U[:, :, 1] = ue_m(0, x)
+        U[:, :, 2] = ue_m(Δt, x)
 
-    @show error
-    
-    
-    nothing
 
-   end
-    
+        d_U
+        display(U[:,:,2])
+
+        tpb = 32
+        nb = cld(nx,32)
+
+        thread_dims = (tpd, tpb)
+        block_dims = (nb,nb)
+
+        
+        @show thread_per_block, num_blocks
+        GPU_lap(U, c, Δx)
+        
+        #=
+        for (m, time) in enumerate(t)
+        plot(xin, yin, ue_m(time), st=:surface, c=:blues, zlims = (-(1+amp), 1+amp))
+        plot!(xin, yin, U[:,:,m], st=:surface, zlims = (-(1+amp), 1+amp))
+        sleep(.1)
+        gui()
+        end
+        =#
+        #errors[iter] = norm(U[:,:,end] .- ue_m(T)) * sqrt(Δx^2)
+        #@printf("\tError mat free: %f\n", error)
+        #if iter != 1
+        #    @printf("current error: %f\n", errors[iter])
+        #    @printf("previous error: %f\n", errors[iter-1])
+        #    @printf("rate: %f\n\n", log(2, errors[iter-1]/errors[iter]))
+        #    
+        #end
+
+    end
+
 end
+    
