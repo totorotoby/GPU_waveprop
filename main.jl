@@ -302,14 +302,14 @@ let
             f_half = zeros((nx-2)*(ny-2))
             d_f_half = CuArray(f_half)
             @cuda threads=num_threads_per_block blocks=num_blocks kel_F_v!(d_f_half, (m-1)*Δt, d_yin, d_xin)
-            b = vcat(zeros(N), Array(d_f_half))
-            d_b = CuArray(f_v)
-            d_v = CuArray(Umol[:,m-1])
+            # b = vcat(zeros(N), Array(d_f_half))
+            # d_b = CuArray(f_v)
+            # d_v = CuArray(Umol[:,m-1])
             # Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt, xin))
-            y = zeros(2 * (nx-2) * (ny-2))
-            d_y = CuArray(y)
-            @cuda threads=num_threads_per_block blocks=num_blocks knl_gemv!(d_y, d_A, d_v, d_b)
-            Umol[:,m] = Array(d_y) * Δt*c^2 + Umol[:,m-1]
+            # y = zeros(2 * (nx-2) * (ny-2))
+            # d_y = CuArray(y)
+            # @cuda threads=num_threads_per_block blocks=num_blocks knl_gemv!(d_y, d_A, d_v, d_b)
+            # Umol[:,m] = Array(d_y) * Δt*c^2 + Umol[:,m-1]
         end
 
         @printf("...done\n")
