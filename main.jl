@@ -109,7 +109,7 @@ function generateSamples(F, xin, yin, tval, ni)    #generate samples of F on cpu
     return samples
 end
 
-function knl_gemv!(y, c, A, x, b)
+function knl_gemv!(y, A, x, b)
 
     N = length(y)
 
@@ -120,7 +120,7 @@ function knl_gemv!(y, c, A, x, b)
     i = dim * (bid - 1) + tid #unique global thread ID
         if i <= N
             for k = 1:N
-                y[i] += c * A[i, k]*x[k]
+                y[i] += A[i, k]*x[k]
             end
             y[i] += b[i]
         end
@@ -302,14 +302,14 @@ let
             f_half = zeros((nx-2)*(ny-2))
             d_f_half = CuArray(f_half)
             @cuda threads=num_threads_per_block blocks=num_blocks kel_F_v!(d_f_half, (m-1)*Δt, d_yin, d_xin)
-            b = vcat(zeros(N), Array(d_f_half)) + Umol[:,m-1]
+            b = vcat(zeros(N), Array(d_f_half))
             d_b = CuArray(f_v)
             d_v = CuArray(Umol[:,m-1])
             # Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt, xin))
             y = zeros(2 * (nx-2) * (ny-2))
             d_y = CuArray(y)
-            @cuda threads=num_threads_per_block blocks=num_blocks knl_gemv!(d_y, Δt*c^2, d_A, d_v, d_b)
-            Umol[:,m] = Array(y)
+            @cuda threads=num_threads_per_block blocks=num_blocks knl_gemv!(d_y, d_A, d_v, d_b)
+            Umol[:,m] = Array(d_y) * Δt*c^2 + Umol[:,m-1]
         end
 
         @printf("...done\n")
