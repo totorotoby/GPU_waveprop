@@ -1,0 +1,447 @@
+using LinearAlgebra
+using SparseArrays
+using Kronecker
+using Plots
+using Printf
+using CUDA
+include("matfree_GPU.jl")
+
+
+
+function mat_free_solve(c::Float64, x, y, t, Δx::Float64, Δy::Float64, Δt::Float64,
+                        ni::Int, T::Int, U::Array{Float64,3}, F::Function)
+
+    #@show ni
+    #@show length(y)
+    for (tind, tval) in enumerate(t[3:end])
+        for (i, xval) in enumerate(x)
+            for (j, yval) in enumerate(y)
+                k = tind + 2
+                #@show i,j,k
+                # on south boundary
+                if j == 1
+                    d2y = (-2U[i, j , k-1] + U[i, j+1, k-1])/(Δy^2)
+                # on north boundary
+                elseif j == ni 
+                    d2y = (U[i, j-1, k-1] - 2U[i,j,k-1])/(Δy^2)
+                # interior
+                else
+                    d2y = (U[i, j-1, k-1] - 2U[i,j,k-1] + U[i, j+1, k-1])/(Δy^2)
+                end
+                # on east boundary
+                if i == 1
+                    d2x = (-2U[i,j,k-1] + U[i+1, j, k-1])/(Δx^2)
+                # on west boundary
+                elseif i == ni
+                    d2x = (U[i-1, j, k-1] - 2U[i,j,k-1] )/(Δx^2)
+                # interior
+                else
+                    d2x = (U[i-1, j, k-1] - 2U[i,j,k-1] + U[i+1, j, k-1])/(Δx^2)
+                end
+
+                # stencil computation
+                U[i,j,k] = 2U[i,j,k-1] - U[i, j, k-2] + c^2 * (Δt^2) * (d2x + d2y) + (Δt^2)*F(xval, yval, tval)
+            end
+        end
+    end
+end
+
+
+function knl_custom_mat_free!(c::Float64, x, y, t, Δx::Float64, Δy::Float64, Δt::Float64,
+                            ni::Int, T, U, tind, samples)
+                            #k is time index, passed as index of for loop calling this function
+
+    bidx = blockIdx().x      #get thread's block ID
+    tidx = threadIdx().x     #get thread ID
+    dimx = blockDim().x      #get number of threads per block
+
+    bidy = blockIdx().y      #thread's block ID
+    tidy = threadIdx().y    #get thread ID
+    dimy = blockDim().y     #get number of threads per block
+
+    i = dimx * (bidx - 1) + tidx   #unique global thread ID in x-direction
+    j = dimy * (bidy - 1) + tidy   #unique global thread ID in y-direction
+    k = tind + 2
+
+    if j <= ni && i <= ni
+        #on south boundary
+        if j == 1 && i <= ni
+            d2y = (-2U[i, j, k-1] + U[i, j+1, k-1])/(Δy^2)
+        #on north boundary
+        elseif j == ni
+            d2y = (U[i, j-1, k-1] - 2U[i,j,k-1])/(Δy^2)
+        #interior
+        else
+            d2y = (U[i, j-1, k-1] - 2U[i,j,k-1] + U[i, j+1, k-1])/(Δy^2)
+        end
+        # on east boundary
+        if i == 1
+            d2x = (-2U[i,j,k-1] + U[i+1, j, k-1])/(Δx^2)
+        # on west boundary
+        elseif i == ni
+            d2x = (U[i-1, j, k-1] - 2U[i,j,k-1] )/(Δx^2)
+        # interior
+        else
+            d2x = (U[i-1, j, k-1] - 2U[i,j,k-1] + U[i+1, j, k-1])/(Δx^2)
+        end
+
+        # stencil computation
+        sampleVal = samples[i, j]
+        U[i,j,k] = 2U[i,j,k-1] - U[i, j, k-2] + c^2 * (Δt^2) * (d2x + d2y) + (Δt^2)*sampleVal 
+    end
+
+    return nothing
+end
+
+
+function generateSamples(F, xin, yin, tval, ni)    #generate samples of F on cpu for GPU kernel
+    #sizeT = size(t)[1]
+    sizeX = size(xin)[1]
+    sizeY = size(yin)[1]
+    samples = zeros(Float64, (sizeX, sizeY))
+
+    for (i, xval) in enumerate(xin)
+        for (j, yval) in enumerate(yin)
+            samples[i, j] = F(xval, yval, tval)
+        end
+    end
+
+    return samples
+end
+
+
+                    
+
+let
+
+    m_refine = 1:6
+    nodes = 2 * 2 .^ m_refine
+    #nodes = 96
+    errors = Array{Float64,1}(undef, length(m_refine))
+    errors_GPU = Array{Float64,1}(undef, length(m_refine))
+    
+    for (iter, nx) in enumerate(nodes)
+        @printf("solving on %d x %d grid\n", nx, nx)
+        # number of spatial nodes in x direction
+        ny = nx
+        # number of interior nodes
+        ni = nx - 2
+        #distance between nodes
+        Δx = Δy = 2/(nx - 1)
+        x = -1:Δx:1
+        xin = x[2:nx-1]
+        #@show collect(xin)
+        y = -1:Δx:1
+        yin = y[2:ny-1]
+        # size of MOL vector solution
+        N = ni^2
+
+        # wave speed
+        c = 1.0
+        Δt = .5*Δx^2*c 
+        T = 1
+        t = 0:Δt:T
+        M = length(t)
+        
+
+        #################################
+        #     Manufactured Solution     #
+        #################################
+
+        # guess solution sin waves scaled to domain
+        ue(x,y,t) = sin(π*x)*sin(π*y)*cos(π*c*t)
+        ue_xx(x,y,t) = -π^2*sin(π*x)*sin(π*y)*cos(π*c*t)
+        ue_yy(x,y,t) = -π^2*sin(π*x)*sin(π*y)*cos(π*c*t)
+        ue_t(x,y,t) = -π*c*sin(π*x)*sin(π*y)*sin(π*c*t)
+        ue_tt(x,y,t) = -π^2*c^2*sin(π*x)*sin(π*y)*cos(π*c*t)
+        
+        F(x,y,t) = ue_tt(x,y,t) - c^2*(ue_xx(x,y,t) + ue_yy(x,y,t))
+
+
+        # just interior points of source and guessed solution
+        # matrix format
+        ue_m(t, mesh) = [ue(i, j, t) for i in mesh, j in mesh]
+        # column stacked
+        ue_v(t, mesh) = [ue(i, j, t) for j in mesh for i in mesh]
+        
+        
+        
+        ue_tv(t, mesh) = [ue_t(i, j, t) for j in yin for i in mesh]
+        F_v(t, mesh) = vcat(zeros(N), [F(i,j,t) for j in yin for i in mesh])
+        
+        
+        ###########################
+        #    CPU Matrix-Free      # 
+        ###########################
+        
+
+        @printf("Running CPU Matrix-Free verison\n")
+        U = Array{Float64,3}(undef, ni, ni, M)
+        U[:, :, 1] = ue_m(0, xin)
+        U[:, :, 2] = ue_m(Δt, xin)
+        
+        mat_free_solve(c, xin, yin, t, Δx, Δy, Δt, ni, T, U, F)
+        
+        errors[iter] = norm(U[:,:,end] .- ue_m(T, xin)) * sqrt(Δx^2)
+        
+        if iter != 1
+            @printf("current error: %f\n", errors[iter])
+            @printf("previous error: %f\n", errors[iter-1])
+            @printf("rate: %f\n\n", log(2, errors[iter-1]/errors[iter]))
+            
+        end
+        @printf("...done\n")
+        
+    
+        
+        ###################
+        #     CPU-MOL     #
+        ###################
+        
+        @printf("Running CPU-MOL verison\n")
+    
+        Umol = Array{Float64,2}(undef, 2*N, M)
+        # add displacement and velocity intial condition.
+        Umol[:,1] = vcat(ue_v(0, xin), ue_tv(0, xin))
+        #display(Umol[:,1])
+        #discrete laplician
+        Ix = sparse(I, ni, ni)
+        Iy = sparse(I, ni, ni)
+        D2 = sparse(1:ni, 1:ni, -2) +
+            sparse(2:ni, 1:ni-1, ones(ni-1), ni, ni) +
+            sparse(1:ni-1, 2:ni, ones(ni-1), ni, ni)
+        Dxx = kron(D2, Iy)
+        Dyy = kron(Ix, D2)
+        
+        # constructing matrix to do timestepping
+        Auu = spzeros(N,N)
+        Auv = sparse(I, N, N)
+        Avu = (c^2/Δx^2) * (Dxx + Dyy)
+        Avv = spzeros(N,N)
+        A = [Auu Auv
+             Avu Avv]
+        
+        for m = 2:M
+            Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt, xin))
+        end
+        
+        usol = Umol[1:N,end]
+        
+        #=
+        plot_step = 4
+        for m in 1:plot_step:M
+        plot(xin, yin, Umol[1:N,m], st=:surface, zlims = (-(1+amp), 1+amp))
+        sleep(.1)
+        gui()
+        end
+        =#
+
+        errors[iter] = norm(usol - ue_v(T, xin)) * √(Δx^2)
+        
+        if iter != 1
+            @printf("current error: %f\n", errors[iter])
+            @printf("previous error: %f\n", errors[iter-1])
+            @printf("rate: %f\n\n", log(2, errors[iter-1]/errors[iter]))
+        end
+
+        @printf("...done\n")
+        
+       
+        
+        
+        
+        #########################
+        #   GPU Matrix-Free     #
+        #########################
+        
+        @printf("Running GPU Matrix-Free verison\n")
+    
+        h_U = Array{Float64,3}(undef, ni, ni, M)
+        h_U[:, :, 1] = ue_m(0, xin)
+        h_U[:, :, 2] = ue_m(Δt, xin)
+
+
+        d_U = CuArray(h_U)
+        d_t = CuArray(t)
+        d_xin = CuArray(xin)
+        d_yin = CuArray(yin)
+        #ni * ni: total number of interior nodes
+
+        num_threads_per_block_x = 32
+        num_threads_per_block_y = 32
+        num_blocks_x = cld(ni, num_threads_per_block_x)
+        num_blocks_y = cld(ni, num_threads_per_block_y)
+
+        
+        tid_tuple = (num_threads_per_block_x, num_threads_per_block_y)
+        bid_tuple = (num_blocks_x, num_blocks_y)
+
+        for (tind, tval) in enumerate(t[3:end]) #pass tind to kernel for K
+            samples = generateSamples(F, xin, yin, tval, ni)
+            d_samples = CuArray(samples)
+            @cuda threads=tid_tuple blocks=bid_tuple knl_custom_mat_free!(c, d_xin, d_yin, d_t, Δx, Δy,
+                                                                          Δt, ni, T, d_U, tind, d_samples)
+            synchronize()
+        end
+        
+        Uout = Array(d_U)
+        errors_GPU[iter] = norm(Uout[:,:,end] - ue_m(T, xin)) * √(Δx^2)
+
+        
+        if iter != 1
+            @printf("current error: %f\n", errors_GPU[iter])
+            @printf("previous error: %f\n", errors_GPU[iter-1])
+            @printf("rate: %f\n\n", log(2, errors_GPU[iter-1]/errors_GPU[iter]))
+         end
+        @printf("...done\n")
+        
+        @printf("\n\n\n")
+    end
+    
+    
+end
+
+
+
+
+
+
+
+    
+
+            
+        ##################################
+        #   GPU spatial Matrix-Free 2D   # 
+        ##################################
+
+        
+        #=
+        Three arrays to store spatial points at:
+        current timestep
+        1 timestep ago
+        2 timesteps ago
+        =#
+        #=
+        U1 = ue_m(0, x)
+        U2 = ue_m(Δt, x)
+        U3 = Array{Float64,2}(undef, nx, nx)
+
+        #threads per block
+        tpb = 32
+        # number of blocks
+        nb = cld(nx,32)
+
+        # square dimensions of blocks
+        thread_dims = (tpb, tpb)
+        block_dims = (nb,nb)
+        
+        @printf("launching kernel with %f by %f blocks and %f by %f threads per block",
+                block_dims[1], block_dims[2], thread_dims[1], thread_dims[2])
+
+        for m = 3:4
+
+            d_U = CuArray(U2)
+            d_Uout = CuArray{Float64},(undef, nx, nx)
+            @cuda blocks=block_dims threads=thread_dims !(d_U, c, Δx,
+                                                                 Val(tpb), Val(nb))
+            synchronize()
+            #euler step
+            U3[:,:] .= 2U2[:,:] .- U1[:,:] + Δt^2 .* Array(d_U)
+            #shift everything over for next timestep
+            U2[:,:] .= U3[:,:]
+            U1[:,:] .= U2[:,:]
+        end
+
+        errors[iter] = norm(U[:,:,2] .- ue_m(T)) * sqrt(Δx^2)
+        @printf("\tError mat free: %f\n", error)
+        if iter != 1
+            @printf("current error: %f\n", errors[iter])
+            @printf("previous error: %f\n", errors[iter-1])
+            @printf("rate: %f\n\n", log(2, errors[iter-1]/errors[iter]))
+        end
+        =#
+
+
+        ################################################
+        #   GPU spatial shared memory Matrix-Free 1D   # 
+        ################################################
+
+        
+        #=
+        Three arrays to store spatial points at:
+        current timestep
+        1 timestep ago
+        2 timesteps ago
+        =#
+#=
+        # Matrix Laplician for zero dirchelete
+        Ix = sparse(I, nx, nx)
+        Iy = sparse(I, nx, nx)
+        D2 = sparse(1:nx, 1:nx, -2) +
+            sparse(2:nx, 1:nx-1, ones(nx-1), nx, nx) +
+            sparse(1:nx-1, 2:nx, ones(nx-1), nx, nx)
+        Dxx = kron(D2, Iy)
+        Dyy = kron(Ix, D2)
+        Avu = (c^2/Δx^2) * (Dxx + Dyy)
+        for i in 1:(nx*nx)
+
+            if i <= nx
+                Avu[i, :] = zeros(nx*nx)'
+            end
+
+            if i % nx == 0 || i % nx == 1
+                 Avu[i, :] = zeros(nx*nx)'
+            end
+
+        end
+        
+
+        # matrix free
+        U = ue_m(0, x)
+        d_U = CuArray(U)
+        Uout = Array{Float64, 2}(undef, nx, nx)
+        d_Lap = CuArray(Uout)
+        tpb = 32
+        bn = cld(nx, tpb)
+        
+        #@show tpb, bn
+
+        @cuda blocks=bn threads=tpb lap_1d_shared_kern!(d_U, d_Lap, c, Δx, nx, Val(tpb), Val(bn))
+
+        # matrix multiply
+        Uinit = ue_v(0,x)
+        display(Uinit)
+        #@show size(Uinit), size(Avu)
+        Ucheck = Avu * Uinit
+        
+        
+        @assert reshape(Uout, (nx*nx,1)) ≈ Ucheck
+        
+        
+        #U2 = ue_m(Δt, x)
+        #U3 = Array{Float64,2}(undef, nx, nx)
+
+        #threads per block
+        #tpb = 32
+        # number of blocks
+        #nb = cld(nx,32)
+
+        # square dimensions of blocks
+        #thread_dims = (tpb, tpb)
+        #block_dims = (nb,nb)
+
+        #=
+        Ix = sparse(I, ni, ni)
+        Iy = sparse(I, ni, ni)
+        D2 = sparse(1:ni, 1:ni, -2) +
+            sparse(2:ni, 1:ni-1, ones(ni-1), ni, ni) +
+            sparse(1:ni-1, 2:ni, ones(ni-1), ni, ni)
+        Dxx = kron(D2, Iy)
+        Dyy = kron(Ix, D2)
+        Avu = (c^2/Δx^2) * (Dxx + Dyy)
+        =#
+       
+
+end
+=#
+    
