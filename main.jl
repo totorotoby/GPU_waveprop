@@ -109,7 +109,23 @@ function generateSamples(F, xin, yin, tval, ni)    #generate samples of F on cpu
     return samples
 end
 
+function knl_gemv!(y, c, A, x, b)
 
+    N = length(y)
+
+    bid = blockIdx().x  # get the thread's block ID
+    tid = threadIdx().x # get my thread ID
+    dim = blockDim().x  # how many threads in each block
+
+    i = dim * (bid - 1) + tid #unique global thread ID
+        if i <= N
+            for k = 1:N
+                y[i] += c * A[i, k]*x[k]
+            end
+            y[i] += b[i]
+        end
+    return nothing
+end
                     
 
 let
@@ -155,7 +171,8 @@ let
         ue_t(x,y,t) = -π*c*sin(π*x)*sin(π*y)*sin(π*c*t)
         ue_tt(x,y,t) = -π^2*c^2*sin(π*x)*sin(π*y)*cos(π*c*t)
         
-        F(x,y,t) = ue_tt(x,y,t) - c^2*(ue_xx(x,y,t) + ue_yy(x,y,t))
+        # F(x,y,t) = ue_tt(x,y,t) - c^2*(ue_xx(x,y,t) + ue_yy(x,y,t))
+        F(x,y,t) = π^2*c^2*sin(π*x)*sin(π*y)*cos(π*c*t)
 
 
         # just interior points of source and guessed solution
@@ -168,6 +185,7 @@ let
         
         ue_tv(t, mesh) = [ue_t(i, j, t) for j in yin for i in mesh]
         F_v(t, mesh) = vcat(zeros(N), [F(i,j,t) for j in yin for i in mesh])
+
         
         
         ###########################
@@ -175,22 +193,22 @@ let
         ###########################
         
 
-        @printf("Running CPU Matrix-Free verison\n")
-        U = Array{Float64,3}(undef, ni, ni, M)
-        U[:, :, 1] = ue_m(0, xin)
-        U[:, :, 2] = ue_m(Δt, xin)
+        # @printf("Running CPU Matrix-Free verison\n")
+        # U = Array{Float64,3}(undef, ni, ni, M)
+        # U[:, :, 1] = ue_m(0, xin)
+        # U[:, :, 2] = ue_m(Δt, xin)
         
-        mat_free_solve(c, xin, yin, t, Δx, Δy, Δt, ni, T, U, F)
+        # mat_free_solve(c, xin, yin, t, Δx, Δy, Δt, ni, T, U, F)
         
-        errors[iter] = norm(U[:,:,end] .- ue_m(T, xin)) * sqrt(Δx^2)
+        # errors[iter] = norm(U[:,:,end] .- ue_m(T, xin)) * sqrt(Δx^2)
         
-        if iter != 1
-            @printf("current error: %f\n", errors[iter])
-            @printf("previous error: %f\n", errors[iter-1])
-            @printf("rate: %f\n\n", log(2, errors[iter-1]/errors[iter]))
+        # if iter != 1
+        #     @printf("current error: %f\n", errors[iter])
+        #     @printf("previous error: %f\n", errors[iter-1])
+        #     @printf("rate: %f\n\n", log(2, errors[iter-1]/errors[iter]))
             
-        end
-        @printf("...done\n")
+        # end
+        # @printf("...done\n")
         
     
         
@@ -220,6 +238,7 @@ let
         Avv = spzeros(N,N)
         A = [Auu Auv
              Avu Avv]
+
         
         for m = 2:M
             Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt, xin))
@@ -246,7 +265,55 @@ let
 
         @printf("...done\n")
         
-       
+
+        ###################
+        #     GPU-MOL     #
+        ###################
+        function kel_F_v!(f_half, t, yin, xin)
+            # with at lease (nx-2)*(ny-2) threads
+            nyin = length(yin)
+            nxin = length(xin)
+
+            bid = blockIdx().x
+            tid = threadIdx().x
+            dim = blockDim().x
+
+            ind = dim * (bid - 1) + tid
+
+            if ind <= (nx - 2) * (ny - 2)
+                indx = ind % nxin
+                indy = trunc(ind / nyin) + 1
+                x_t = xin[indx]
+                y_t = yin[indy]
+
+                f_half[ind] = π^2*c^2*sin(π*x_t)*sin(π*y_t)*cos(π*c*t)
+                
+            end
+            return nothing
+        end
+        d_yin = CuArray(yin)
+        d_xin = CuArray(xin)
+        d_A = CuSparseMatrixCSR(A)
+        num_threads_per_block = 32
+        num_blocks = cld((nx-2)*(ny-2), num_threads_per_block)
+
+        @printf("Running GPU-MOL verison with threads per block = %d\n", num_threads_per_block)
+        for m = 2:M
+            f_half = zeros((nx-2)*(ny-2))
+            d_f_half = CuArray(f_half)
+            @cuda threads=num_threads_per_block blocks=num_blocks kel_F_v!(d_f_half, (m-1)*Δt, d_yin, d_xin)
+            b = vcat(zeros(N), Array(d_f_half)) + Umol[:,m-1]
+            d_b = CuArray(f_v)
+            d_v = CuArray(Umol[:,m-1])
+            # Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt, xin))
+            y = zeros(2 * (nx-2) * (ny-2))
+            d_y = CuArray(y)
+            @cuda threads=num_threads_per_block blocks=num_blocks knl_gemv!(d_y, Δt*c^2, d_A, d_v, d_b)
+            Umol[:,m] = Array(y)
+        end
+
+        @printf("...done\n")
+
         
         
         
@@ -254,48 +321,48 @@ let
         #   GPU Matrix-Free     #
         #########################
         
-        @printf("Running GPU Matrix-Free verison\n")
+        # @printf("Running GPU Matrix-Free verison\n")
     
-        h_U = Array{Float64,3}(undef, ni, ni, M)
-        h_U[:, :, 1] = ue_m(0, xin)
-        h_U[:, :, 2] = ue_m(Δt, xin)
+        # h_U = Array{Float64,3}(undef, ni, ni, M)
+        # h_U[:, :, 1] = ue_m(0, xin)
+        # h_U[:, :, 2] = ue_m(Δt, xin)
 
 
-        d_U = CuArray(h_U)
-        d_t = CuArray(t)
-        d_xin = CuArray(xin)
-        d_yin = CuArray(yin)
-        #ni * ni: total number of interior nodes
+        # d_U = CuArray(h_U)
+        # d_t = CuArray(t)
+        # d_xin = CuArray(xin)
+        # d_yin = CuArray(yin)
+        # #ni * ni: total number of interior nodes
 
-        num_threads_per_block_x = 32
-        num_threads_per_block_y = 32
-        num_blocks_x = cld(ni, num_threads_per_block_x)
-        num_blocks_y = cld(ni, num_threads_per_block_y)
-
-        
-        tid_tuple = (num_threads_per_block_x, num_threads_per_block_y)
-        bid_tuple = (num_blocks_x, num_blocks_y)
-
-        for (tind, tval) in enumerate(t[3:end]) #pass tind to kernel for K
-            samples = generateSamples(F, xin, yin, tval, ni)
-            d_samples = CuArray(samples)
-            @cuda threads=tid_tuple blocks=bid_tuple knl_custom_mat_free!(c, d_xin, d_yin, d_t, Δx, Δy,
-                                                                          Δt, ni, T, d_U, tind, d_samples)
-            synchronize()
-        end
-        
-        Uout = Array(d_U)
-        errors_GPU[iter] = norm(Uout[:,:,end] - ue_m(T, xin)) * √(Δx^2)
+        # num_threads_per_block_x = 32
+        # num_threads_per_block_y = 32
+        # num_blocks_x = cld(ni, num_threads_per_block_x)
+        # num_blocks_y = cld(ni, num_threads_per_block_y)
 
         
-        if iter != 1
-            @printf("current error: %f\n", errors_GPU[iter])
-            @printf("previous error: %f\n", errors_GPU[iter-1])
-            @printf("rate: %f\n\n", log(2, errors_GPU[iter-1]/errors_GPU[iter]))
-         end
-        @printf("...done\n")
+        # tid_tuple = (num_threads_per_block_x, num_threads_per_block_y)
+        # bid_tuple = (num_blocks_x, num_blocks_y)
+
+        # for (tind, tval) in enumerate(t[3:end]) #pass tind to kernel for K
+        #     samples = generateSamples(F, xin, yin, tval, ni)
+        #     d_samples = CuArray(samples)
+        #     @cuda threads=tid_tuple blocks=bid_tuple knl_custom_mat_free!(c, d_xin, d_yin, d_t, Δx, Δy,
+        #                                                                   Δt, ni, T, d_U, tind, d_samples)
+        #     synchronize()
+        # end
         
-        @printf("\n\n\n")
+        # Uout = Array(d_U)
+        # errors_GPU[iter] = norm(Uout[:,:,end] - ue_m(T, xin)) * √(Δx^2)
+
+        
+        # if iter != 1
+        #     @printf("current error: %f\n", errors_GPU[iter])
+        #     @printf("previous error: %f\n", errors_GPU[iter-1])
+        #     @printf("rate: %f\n\n", log(2, errors_GPU[iter-1]/errors_GPU[iter]))
+        #  end
+        # @printf("...done\n")
+        
+        # @printf("\n\n\n")
     end
     
     
