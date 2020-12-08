@@ -3,8 +3,7 @@ using SparseArrays
 using Kronecker
 using Plots
 using Printf
-using CUDA
-using CUDA.CUSPARSE
+using CUDA, CUDA.CUSPARSE
 include("matfree_GPU.jl")
 
 
@@ -128,28 +127,26 @@ function knl_gemv!(y, A, x, b)
     return nothing
 end
 
-function kel_F_v!(f_half, t, yin, xin)
+function knl_F_v!(f_half, t, yin, xin)
     # with at lease (nx-2)*(ny-2) threads
     nyin = length(yin)
     nxin = length(xin)
-    @printf("nyin = %d, nxin = %d\n", nyin, nxin)
 
     bid = blockIdx().x
     tid = threadIdx().x
     dim = blockDim().x
 
     ind = dim * (bid - 1) + tid
-    @printf("ind = %d\n", ind)
 
-   if ind <= (nx - 2) * (ny - 2)
-       indx = ind % nxin
-       indy = trunc(ind / nyin) + 1
-       x_t = xin[indx]
-       y_t = yin[indy]
-
-       f_half[ind] = π^2*c^2*sin(π*x_t)*sin(π*y_t)*cos(π*c*t)
+    if ind <= nxin * nyin
+        indx = ind % nxin
+        indy = Int32(ind/nxin)
+        x_t = xin[indx]
+#       y_t = yin[indy - 1]
+        c = 1.0
+#       f_half[ind] = π^2*c^2*CUDA.sin(π*x_t)*CUDA.sin(π*y_t)*CUDA.cos(π*c*t)
        
-   end
+    end
     return nothing
 end
                     
@@ -300,12 +297,13 @@ let
         d_A = CuSparseMatrixCSR(A)
         num_threads_per_block = 32
         num_blocks = cld((nx-2)*(ny-2), num_threads_per_block)
+        @printf("length = %d\n", length(d_yin))
 
         @printf("Running GPU-MOL verison with threads per block = %d\n", num_threads_per_block)
         for m = 2:M
             f_half = zeros((nx-2)*(ny-2))
             d_f_half = CuArray(f_half)
-            @cuda threads=num_threads_per_block blocks=num_blocks kel_F_v!(d_f_half, (m-1)*Δt, d_yin, d_xin)
+            @cuda threads=num_threads_per_block blocks=num_blocks knl_F_v!(d_f_half, (m-1)*Δt, d_yin, d_xin)
             # b = vcat(zeros(N), Array(d_f_half))
             # d_b = CuArray(f_v)
             # d_v = CuArray(Umol[:,m-1])
