@@ -4,6 +4,7 @@ using Kronecker
 using Plots
 using Printf
 using CUDA
+using CUDA.CUSPARSE
 include("matfree_GPU.jl")
 
 
@@ -273,22 +274,24 @@ let
             # with at lease (nx-2)*(ny-2) threads
             nyin = length(yin)
             nxin = length(xin)
+            @printf("nyin = %d, nxin = %d\n", nyin, nxin)
 
             bid = blockIdx().x
             tid = threadIdx().x
             dim = blockDim().x
 
             ind = dim * (bid - 1) + tid
+            @printf("ind = %d\n", ind)
 
-            if ind <= (nx - 2) * (ny - 2)
-                indx = ind % nxin
-                indy = trunc(ind / nyin) + 1
-                x_t = xin[indx]
-                y_t = yin[indy]
-
-                f_half[ind] = π^2*c^2*sin(π*x_t)*sin(π*y_t)*cos(π*c*t)
-                
-            end
+#            if ind <= (nx - 2) * (ny - 2)
+#                indx = ind % nxin
+#                indy = trunc(ind / nyin) + 1
+#                x_t = xin[indx]
+#                y_t = yin[indy]
+#
+#                f_half[ind] = π^2*c^2*sin(π*x_t)*sin(π*y_t)*cos(π*c*t)
+#                
+#            end
             return nothing
         end
         d_yin = CuArray(yin)
