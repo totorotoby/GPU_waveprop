@@ -139,12 +139,21 @@ function knl_F_v!(f_half, t, yin, xin)
     ind = dim * (bid - 1) + tid
 
     if ind <= nxin * nyin
-        indx = ind % nxin
-        indy = Int32(ind/nxin)
+#        indx = ind % nxin
+        #        indy = Int32(ind/nxin)
+        #        indx = Int32(ind/nyin)
+        indx = cld(ind, nyin)
+        indy = ind % nyin
+#        if indx == 0
+#            indx = nxin
+#        end
+        if indy == 0
+            indy = nyin
+        end        
         x_t = xin[indx]
-#       y_t = yin[indy - 1]
+        y_t = yin[indy]
         c = 1.0
-#       f_half[ind] = π^2*c^2*CUDA.sin(π*x_t)*CUDA.sin(π*y_t)*CUDA.cos(π*c*t)
+        f_half[ind] = π^2*c^2*CUDA.sin(π*x_t)*CUDA.sin(π*y_t)*CUDA.cos(π*c*t)
        
     end
     return nothing
@@ -221,8 +230,7 @@ let
         # U[:, :, 1] = ue_m(0, xin)
         # U[:, :, 2] = ue_m(Δt, xin)
         
-        # mat_free_solve(c, xin, yin, t, Δx, Δy, Δt, ni, T, U, F)
-        
+        # mat_free_solve(c, xin, yin, t, Δx, Δy, Δt, ni, T, U, F)        
         # errors[iter] = norm(U[:,:,end] .- ue_m(T, xin)) * sqrt(Δx^2)
         
         # if iter != 1
