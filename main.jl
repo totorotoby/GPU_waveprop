@@ -3,8 +3,10 @@ using SparseArrays
 using Kronecker
 using Plots
 using Printf
+
 using CUDA
 using CUDA.CUSPARSE
+
 include("matfree_GPU.jl")
 
 
@@ -167,7 +169,11 @@ function generateSamples(F, xin, yin, t, ni)    #generate samples of F on cpu fo
 end
 
 
+
+
 function knl_gemv!(y, c, A, x, b)
+
+
 
     N = length(y)
 
@@ -178,7 +184,9 @@ function knl_gemv!(y, c, A, x, b)
     i = dim * (bid - 1) + tid #unique global thread ID
         if i <= N
             for k = 1:N
+
                 y[i] += c * A[i, k]*x[k]
+
             end
             y[i] += b[i]
         end
@@ -186,6 +194,29 @@ function knl_gemv!(y, c, A, x, b)
 end
 
 
+function knl_F_v!(f_half, t, yin, xin)
+    # with at lease (nx-2)*(ny-2) threads
+    nyin = length(yin)
+    nxin = length(xin)
+
+    bid = blockIdx().x
+    tid = threadIdx().x
+    dim = blockDim().x
+
+    ind = dim * (bid - 1) + tid
+
+    if ind <= nxin * nyin
+        indx = ind % nxin
+        indy = Int32(ind/nxin)
+        x_t = xin[indx]
+#       y_t = yin[indy - 1]
+        c = 1.0
+#       f_half[ind] = π^2*c^2*CUDA.sin(π*x_t)*CUDA.sin(π*y_t)*CUDA.cos(π*c*t)
+       
+    end
+    return nothing
+end
+                    
 
 let
 
@@ -237,7 +268,8 @@ let
         ue_t(x,y,t) = -π*c*sin(π*x)*sin(π*y)*sin(π*c*t)
         ue_tt(x,y,t) = -π^2*c^2*sin(π*x)*sin(π*y)*cos(π*c*t)
         
-        F(x,y,t) = ue_tt(x,y,t) - c^2*(ue_xx(x,y,t) + ue_yy(x,y,t))
+        # F(x,y,t) = ue_tt(x,y,t) - c^2*(ue_xx(x,y,t) + ue_yy(x,y,t))
+        F(x,y,t) = π^2*c^2*sin(π*x)*sin(π*y)*cos(π*c*t)
 
 
         # just interior points of source and guessed solution
@@ -249,6 +281,10 @@ let
         ue_tv(t, mesh) = [ue_t(i, j, t) for j in yin for i in mesh]
         F_v(t, mesh) = vcat(zeros(N), [F(i,j,t) for j in yin for i in mesh])
         F_m(mesh, ts) = [F(i, j, k) for i in mesh, j in mesh, k in ts]
+
+
+        
+
         
         ###########################
         #    CPU Matrix-Free      # 
@@ -274,43 +310,33 @@ let
         end
         @printf("...done\n\n")
             
-          =#  
-
-            ###################
-            #     CPU-MOL     #
-            ###################
-           #= 
-            @printf("Running CPU-MOL verison\n")
-        cpu_m = @elapsed begin
-            Umol = Array{Float64,2}(undef, 2*N, M)
-            # add displacement and velocity intial condition.
-            Umol[:,1] = vcat(ue_v(0, xin), ue_tv(0, xin))
-            #display(Umol[:,1])
-            #discrete laplician
-            Ix = sparse(I, ni, ni)
-            Iy = sparse(I, ni, ni)
-            D2 = sparse(1:ni, 1:ni, -2) +
-                sparse(2:ni, 1:ni-1, ones(ni-1), ni, ni) +
-                sparse(1:ni-1, 2:ni, ones(ni-1), ni, ni)
-            Dxx = kron(D2, Iy)
-            Dyy = kron(Ix, D2)
-            
-            # constructing matrix to do timestepping
-            Auu = spzeros(N,N)
-            Auv = sparse(I, N, N)
-            Avu = (c^2/Δx^2) * (Dxx + Dyy)
-            Avv = spzeros(N,N)
-            A = [Auu Auv
-                 Avu Avv]
-            
-            for m = 2:M
-                Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1]) #+ F_v((m-1)*Δt, xin))
-            end
-            
-            usol = Umol[1:N,end]
-        end
-       
+        ###################
+        #     CPU-MOL     #
+        ###################
         
+        @printf("Running CPU-MOL verison\n")
+    
+        Umol = Array{Float64,2}(undef, 2*N, M)
+        # add displacement and velocity intial condition.
+        Umol[:,1] = vcat(ue_v(0, xin), ue_tv(0, xin))
+        #display(Umol[:,1])
+        #discrete laplician
+        Ix = sparse(I, ni, ni)
+        Iy = sparse(I, ni, ni)
+        D2 = sparse(1:ni, 1:ni, -2) +
+            sparse(2:ni, 1:ni-1, ones(ni-1), ni, ni) +
+            sparse(1:ni-1, 2:ni, ones(ni-1), ni, ni)
+        Dxx = kron(D2, Iy)
+        Dyy = kron(Ix, D2)
+        
+        # constructing matrix to do timestepping
+        Auu = spzeros(N,N)
+        Auv = sparse(I, N, N)
+        Avu = (c^2/Δx^2) * (Dxx + Dyy)
+        Avv = spzeros(N,N)
+        A = [Auu Auv
+             Avu Avv]
+
         plot_step = 4
         anim = @animate for m in 1:plot_step:M
             plot(xin, yin, Umol[1:N,m], st=:surface, zlims = (-1.5, 1.5))
@@ -349,7 +375,6 @@ let
             num_blocks_x = cld(ni, num_threads_per_block_x)
             num_blocks_y = cld(ni, num_threads_per_block_y)
             
-            
             tid_tuple = (num_threads_per_block_x, num_threads_per_block_y)
             bid_tuple = (num_blocks_x, num_blocks_y)
             
@@ -361,19 +386,15 @@ let
             synchronize()
 
             Uout = Array(d_U)
-            
             #=
             for k in 1:M
                 plot(xin,yin, Uout[:,:,k],st=:surface, zlims = (-1.5, 1.5))
                 gui()
             end
             =#
-            
-            
             #display(Uout[:,20:30,15:25])
             errors_GPU[iter] = norm(Uout[:,:,end] - ue_m(T, xin)) * √(Δx^2)
 
-            
             if iter != 1
                 @printf("current error: %f\n", errors_GPU[iter])
                 @printf("previous error: %f\n", errors_GPU[iter-1])
@@ -385,8 +406,37 @@ let
             @printf("Cannot run GPU-Mat Free with time because can only launch one block with physical nodes less than 1024")
         end
 
-        
 
+        @printf("...done\n")
+        
+        #=
+        ###################
+        #     GPU-MOL     #
+        ###################
+        d_yin = CuArray(yin)
+        d_xin = CuArray(xin)
+        d_A = CuSparseMatrixCSR(A)
+        num_threads_per_block = 32
+        num_blocks = cld((nx-2)*(ny-2), num_threads_per_block)
+        @printf("length = %d\n", length(d_yin))
+        
+        @printf("Running GPU-MOL verison with threads per block = %d\n", num_threads_per_block)
+        for m = 2:M
+            f_half = zeros((nx-2)*(ny-2))
+            d_f_half = CuArray(f_half)
+            @cuda threads=num_threads_per_block blocks=num_blocks knl_F_v!(d_f_half, (m-1)*Δt, d_yin, d_xin)
+            # b = vcat(zeros(N), Array(d_f_half))
+            # d_b = CuArray(f_v)
+            # d_v = CuArray(Umol[:,m-1])
+            # Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt, xin))
+            # y = zeros(2 * (nx-2) * (ny-2))
+            # d_y = CuArray(y)
+            # @cuda threads=num_threads_per_block blocks=num_blocks knl_gemv!(d_y, d_A, d_v, d_b)
+            # Umol[:,m] = Array(d_y) * Δt*c^2 + Umol[:,m-1]
+        end
+
+        @printf("...done\n")
+        =#
             
         #########################
         #   GPU Matrix-Free     #
@@ -432,7 +482,8 @@ let
         #     @printf("rate: %f\n\n", log(2, errors_GPU[iter-1]/errors_GPU[iter]))
         #  end
         # @printf("...done\n")
-        
+
+
         #=
         ###################
         #     GPU-MOL     #
@@ -492,7 +543,10 @@ let
         end
         =#
         
-        @printf("...done\n")
+        #@printf("...done\n")
+
+        
+        # @printf("\n\n\n")
 
     end
 
