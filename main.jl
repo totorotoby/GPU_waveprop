@@ -451,7 +451,7 @@ let
             b = vcat(zeros(N), Array(d_f_half))
             # @assert F_v((m-1)*Δt, xin) ≈ b
             d_b = CuArray(b)
-            d_x = CuArray(U_MOL_GPU[:,m-1])
+            d_x = CuArray(copy(U_MOL_GPU[:,m-1]))
             # @assert U_MOL_GPU[:,m-1] ≈ Umol[:, m-1]
             # Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt, xin))
             y = zeros(2 * (nx-2) * (ny-2))
