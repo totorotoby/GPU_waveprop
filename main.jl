@@ -456,7 +456,7 @@ let
             # Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt, xin))
             y = zeros(2 * (nx-2) * (ny-2))
 
-            if iter == 2 && m == 2
+            if m == 2
                 @show A
                 @show U_MOL_GPU[:,m-1]
                 @show b
