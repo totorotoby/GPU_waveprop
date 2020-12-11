@@ -431,7 +431,9 @@ let
         ###################
         #     GPU-MOL     #
         ###################
-        Umol[:,1] = vcat(ue_v(0, xin), ue_tv(0, xin))
+        U_MOL_GPU = Array{Float64,2}(undef, 2*N, M)
+        # add displacement and velocity intial condition.
+        U_MOL_GPU[:,1] = vcat(ue_v(0, xin), ue_tv(0, xin))
         d_yin = CuArray(yin)
         d_xin = CuArray(xin)
         # d_A = CuSparseMatrixCSR(A)
@@ -447,14 +449,17 @@ let
             @cuda threads=num_threads_per_block blocks=num_blocks knl_F_v!(d_f_half, (m-1)*Δt, d_yin, d_xin)
             b = vcat(zeros(N), Array(d_f_half))
             d_b = CuArray(b)
-            d_v = CuArray(Umol[:,m-1])
+            d_v = CuArray(U_MOL_GPU[:,m-1])
             # Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt, xin))
             y = zeros(2 * (nx-2) * (ny-2))
             d_y = CuArray(y)
             @cuda threads=num_threads_per_block blocks=num_blocks knl_gemv!(d_y, d_A, d_v, d_b)
-            Umol[:,m] = Umol[:,m-1] .+ Array(d_y) * Δt*c^2
+            U_MOL_GPU[:,m] = U_MOL_GPU[:,m-1] .+ Array(d_y) * Δt*c^2
+
+            Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt, xin))
+            @assert U_MOL_GPU[:,m] ≈ Umol[:,m]
         end
-        GPU_SOL = Umol[1:N,end]
+        GPU_SOL = U_MOL_GPU[1:N,end]
 
         # @printf("GPU SOL:")
         # @show GPU_SOL
