@@ -449,7 +449,7 @@ let
             y = zeros(2 * (nx-2) * (ny-2))
             d_y = CuArray(y)
             @cuda threads=num_threads_per_block blocks=num_blocks knl_gemv!(d_y, d_A, d_v, d_b)
-            Umol[:,m] = Array(d_y) * Δt*c^2 + Umol[:,m-1]
+            Umol[:,m] = Umol[:,m-1] .+ Array(d_y) * Δt*c^2
         end
         GPU_SOL = Umol[1:N,end]
 
