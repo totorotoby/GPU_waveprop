@@ -451,8 +451,9 @@ let
             @cuda threads=num_threads_per_block blocks=num_blocks knl_gemv!(d_y, d_A, d_v, d_b)
             Umol[:,m] = Array(d_y) * Δt*c^2 + Umol[:,m-1]
         end
+        GPU_SOL = Umol[1:N,end]
 
-        errors_GPU_MOL[iter] = norm(Array(d_y) - ue_v(T, xin)) * √(Δx^2)
+        errors_GPU_MOL[iter] = norm(GPU_SOL - ue_v(T, xin)) * √(Δx^2)
         
         if iter != 1
             @printf("current error: %f\n", errors_GPU_MOL[iter])
