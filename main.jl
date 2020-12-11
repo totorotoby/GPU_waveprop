@@ -342,11 +342,11 @@ let
         A = [Auu Auv
              Avu Avv]
 
-        for m = 2:M
-            Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt, xin))
-        end
+        # for m = 2:M
+        #     Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt, xin))
+        # end
         
-        usol = Umol[1:N,end]
+        # usol = Umol[1:N,end]
         # @printf("CPU SOL:")
         # @show usol
 
@@ -360,13 +360,13 @@ let
         =#
         
         # times_CPU_MOL[iter] = cpu_m
-        errors_CPU_MOL[iter] = norm(usol - ue_v(T, xin)) * √(Δx^2)
+        # errors_CPU_MOL[iter] = norm(usol - ue_v(T, xin)) * √(Δx^2)
         
-        if iter != 1
-            @printf("current error: %f\n", errors_CPU_MOL[iter])
-            @printf("previous error: %f\n", errors_CPU_MOL[iter-1])
-            @printf("rate: %f\n", log(2, errors_CPU_MOL[iter-1]/errors_CPU_MOL[iter]))
-        end
+        # if iter != 1
+        #     @printf("current error: %f\n", errors_CPU_MOL[iter])
+        #     @printf("previous error: %f\n", errors_CPU_MOL[iter-1])
+        #     @printf("rate: %f\n", log(2, errors_CPU_MOL[iter-1]/errors_CPU_MOL[iter]))
+        # end
 
         @printf("...done\n\n")
         
