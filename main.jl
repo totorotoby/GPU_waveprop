@@ -452,6 +452,14 @@ let
             Umol[:,m] = Array(d_y) * Δt*c^2 + Umol[:,m-1]
         end
 
+        errors_GPU_MOL[iter] = norm(Array(d_y) - ue_v(T, xin)) * √(Δx^2)
+        
+        if iter != 1
+            @printf("current error: %f\n", errors_GPU_MOL[iter])
+            @printf("previous error: %f\n", errors_GPU_MOL[iter-1])
+            @printf("rate: %f\n", log(2, errors_GPU_MOL[iter-1]/errors_GPU_MOL[iter]))
+        end
+
         @printf("...done\n")
             
         #########################
