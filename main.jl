@@ -431,7 +431,8 @@ let
         ###################
         d_yin = CuArray(yin)
         d_xin = CuArray(xin)
-        d_A = CuSparseMatrixCSR(A)
+        # d_A = CuSparseMatrixCSR(A)
+        d_A = CuArray(A)
         num_threads_per_block = 32
         num_blocks = cld((nx-2)*(ny-2), num_threads_per_block)
         @printf("length = %d\n", length(d_yin))
