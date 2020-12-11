@@ -448,9 +448,8 @@ let
             f_half = zeros((nx-2)*(ny-2))
             d_f_half = CuArray(f_half)
             @cuda threads=num_threads_per_block blocks=num_blocks knl_F_v!(d_f_half, (m-1)*Δt, d_yin, d_xin)
-            # b = vcat(zeros(N), Array(d_f_half))
+            b = vcat(zeros(N), Array(d_f_half))
             # @assert F_v((m-1)*Δt, xin) ≈ b
-            b = zeros(2 * (nx-2) * (ny-2))
             d_b = CuArray(b)
             d_x = CuArray(U_MOL_GPU[:,m-1])
             # @assert U_MOL_GPU[:,m-1] ≈ Umol[:, m-1]
@@ -460,7 +459,7 @@ let
             d_y = CuArray(y)
             @cuda threads=num_threads_per_block blocks=num_blocks knl_gemv!(d_y, d_A, d_x, d_b)
             @assert U_MOL_GPU[:,m-1] ≈ Umol[:,m-1]
-            @assert Array(d_y) ≈ A*Umol[:,m-1]
+            @assert Array(d_y) ≈ A*Umol[:,m-1] + F_v((m-1)*Δt, xin)
             @assert Array(d_y) * Δt*c^2 ≈ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt, xin))
             U_MOL_GPU[:,m] = U_MOL_GPU[:,m-1] .+ Array(d_y) * Δt*c^2
 
