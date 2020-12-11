@@ -351,7 +351,7 @@ let
         gif(anim, "waves.gif", fps = 15)
         =#
         
-        times_CPU_MOL[iter] = cpu_m
+        # times_CPU_MOL[iter] = cpu_m
         errors_CPU_MOL[iter] = norm(usol - ue_v(T, xin)) * √(Δx^2)
         
         if iter != 1
