@@ -206,14 +206,8 @@ function knl_F_v!(f_half, t, yin, xin)
     ind = dim * (bid - 1) + tid
 
     if ind <= nxin * nyin
-#        indx = ind % nxin
-        #        indy = Int32(ind/nxin)
-        #        indx = Int32(ind/nyin)
         indx = cld(ind, nyin)
         indy = ind % nyin
-#        if indx == 0
-#            indx = nxin
-#        end
         if indy == 0
             indy = nyin
         end        
@@ -369,6 +363,7 @@ let
         ##################################
         #   GPU Matrix-Free with Time    #
         ##################################
+        #=
         if nx^2 <= 1024
             @printf("Running GPU Matrix-Free (Time inside) verison\n")
             
@@ -418,8 +413,10 @@ let
 
 
         @printf("...done\n")
+
+        =#
         
-        #=
+
         ###################
         #     GPU-MOL     #
         ###################
@@ -435,18 +432,17 @@ let
             f_half = zeros((nx-2)*(ny-2))
             d_f_half = CuArray(f_half)
             @cuda threads=num_threads_per_block blocks=num_blocks knl_F_v!(d_f_half, (m-1)*Δt, d_yin, d_xin)
-            # b = vcat(zeros(N), Array(d_f_half))
-            # d_b = CuArray(f_v)
-            # d_v = CuArray(Umol[:,m-1])
+            b = vcat(zeros(N), Array(d_f_half))
+            d_b = CuArray(f_v)
+            d_v = CuArray(Umol[:,m-1])
             # Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt, xin))
-            # y = zeros(2 * (nx-2) * (ny-2))
-            # d_y = CuArray(y)
-            # @cuda threads=num_threads_per_block blocks=num_blocks knl_gemv!(d_y, d_A, d_v, d_b)
-            # Umol[:,m] = Array(d_y) * Δt*c^2 + Umol[:,m-1]
+            y = zeros(2 * (nx-2) * (ny-2))
+            d_y = CuArray(y)
+            @cuda threads=num_threads_per_block blocks=num_blocks knl_gemv!(d_y, d_A, d_v, d_b)
+            Umol[:,m] = Array(d_y) * Δt*c^2 + Umol[:,m-1]
         end
 
         @printf("...done\n")
-        =#
             
         #########################
         #   GPU Matrix-Free     #
