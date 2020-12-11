@@ -343,11 +343,11 @@ let
              Avu Avv]
 
         for m = 2:M
-            Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt))
+            Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt), xin)
         end
         
         usol = Umol[1:N,end]
-        
+
         #=
         plot_step = 4
         anim = @animate for m in 1:plot_step:M
