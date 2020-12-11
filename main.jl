@@ -313,6 +313,7 @@ let
             
         end
         @printf("...done\n\n")
+        =#
             
         ###################
         #     CPU-MOL     #
@@ -341,12 +342,14 @@ let
         A = [Auu Auv
              Avu Avv]
 
+        #=
         plot_step = 4
         anim = @animate for m in 1:plot_step:M
             plot(xin, yin, Umol[1:N,m], st=:surface, zlims = (-1.5, 1.5))
             gui()
         end
         gif(anim, "waves.gif", fps = 15)
+        =#
         
         times_CPU_MOL[iter] = cpu_m
         errors_CPU_MOL[iter] = norm(usol - ue_v(T, xin)) * √(Δx^2)
@@ -358,7 +361,7 @@ let
         end
 
         @printf("...done\n\n")
-        =#
+        
 
         ##################################
         #   GPU Matrix-Free with Time    #
