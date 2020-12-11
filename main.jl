@@ -171,7 +171,7 @@ end
 
 
 
-function knl_gemv!(y, c, A, x, b)
+function knl_gemv!(y, A, x, b)
 
 
 
@@ -185,7 +185,7 @@ function knl_gemv!(y, c, A, x, b)
         if i <= N
             for k = 1:N
 
-                y[i] += c * A[i, k]*x[k]
+                y[i] += A[i, k]*x[k]
 
             end
             y[i] += b[i]
