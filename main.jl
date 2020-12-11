@@ -174,15 +174,15 @@ end
 function knl_gemv!(y, A, x, b)
 
 
-
-    N = length(y)
+    N = length(x)
+    M = length(y)
 
     bid = blockIdx().x  # get the thread's block ID
     tid = threadIdx().x # get my thread ID
     dim = blockDim().x  # how many threads in each block
 
     i = dim * (bid - 1) + tid #unique global thread ID
-        if i <= N
+        if i <= M
             for k = 1:N
 
                 y[i] += A[i, k]*x[k]
