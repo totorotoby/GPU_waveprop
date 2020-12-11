@@ -347,8 +347,8 @@ let
         end
         
         usol = Umol[1:N,end]
-        @printf("CPU SOL:")
-        @show usol
+        # @printf("CPU SOL:")
+        # @show usol
 
         #=
         plot_step = 4
@@ -431,6 +431,7 @@ let
         ###################
         #     GPU-MOL     #
         ###################
+        Umol[:,1] = vcat(ue_v(0, xin), ue_tv(0, xin))
         d_yin = CuArray(yin)
         d_xin = CuArray(xin)
         # d_A = CuSparseMatrixCSR(A)
@@ -455,8 +456,8 @@ let
         end
         GPU_SOL = Umol[1:N,end]
 
-        @printf("GPU SOL:")
-        @show GPU_SOL
+        # @printf("GPU SOL:")
+        # @show GPU_SOL
 
         errors_GPU_MOL[iter] = norm(GPU_SOL - ue_v(T, xin)) * √(Δx^2)
         
