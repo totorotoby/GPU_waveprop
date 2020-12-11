@@ -451,13 +451,14 @@ let
             @assert F_v((m-1)*Δt, xin) ≈ b
             d_b = CuArray(b)
             d_v = CuArray(U_MOL_GPU[:,m-1])
+            # @assert U_MOL_GPU[:,m-1] ≈ Umol[:, m-1]
             # Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt, xin))
             y = zeros(2 * (nx-2) * (ny-2))
             d_y = CuArray(y)
             @cuda threads=num_threads_per_block blocks=num_blocks knl_gemv!(d_y, d_A, d_v, d_b)
             U_MOL_GPU[:,m] = U_MOL_GPU[:,m-1] .+ Array(d_y) * Δt*c^2
 
-            # Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt, xin))
+            Umol[:,m] = Umol[:,m-1] .+ Δt*c^2*(A*Umol[:,m-1] + F_v((m-1)*Δt, xin))
             # @assert U_MOL_GPU[:,m] ≈ Umol[:,m]
         end
         GPU_SOL = U_MOL_GPU[1:N,end]
