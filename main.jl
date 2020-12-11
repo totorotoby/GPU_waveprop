@@ -347,6 +347,8 @@ let
         end
         
         usol = Umol[1:N,end]
+        @printf("CPU SOL:")
+        @show usol
 
         #=
         plot_step = 4
@@ -452,6 +454,9 @@ let
             Umol[:,m] = Umol[:,m-1] .+ Array(d_y) * Δt*c^2
         end
         GPU_SOL = Umol[1:N,end]
+
+        @printf("GPU SOL:")
+        @show GPU_SOL
 
         errors_GPU_MOL[iter] = norm(GPU_SOL - ue_v(T, xin)) * √(Δx^2)
         
